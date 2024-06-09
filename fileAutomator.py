@@ -1,109 +1,90 @@
-from os import scandir, rename
-from os.path import splitext, exists, join
-from shutil import move
-from time import sleep
+import os
+import shutil
+from pathlib import Path
 
-import logging
+# Configuration
+DOWNLOADS_FOLDER = Path(r'C:\Users\hello\Downloads')
 
-from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
+SORTING_RULES = {
+    'Music': {
+        'extensions': ['.mp3', '.wav', '.flac'],
+        'destination': Path(r'D:\Vault\My files\@audio')
+    },
+    'Videos': {
+        'extensions': ['.mp4', '.avi', '.mkv'],
+        'destination': Path(r'D:\Vault\My files\@videos')
+    },
+    'Images': {
+        'extensions': ['.jpg', '.jpeg', '.png', '.gif'],
+        'destination': Path(r'D:\Vault\My files\@dump\2024')
+    },
+    'Documents': {
+        'extensions': ['.pdf', '.docx', '.xlsx', '.pptx', '.txt'],
+        'destination': Path(r'D:\Vault\My files\@documents')
+    },
+    'Executables': {
+        'extensions': ['.exe', '.msi'],
+        'destination': Path(r'D:\Vault\My files\@exe')
+    },
+    'Archives': {
+        'extensions': ['.zip', '.rar', '.7z', '.tar', '.gz'],
+        'destination': Path(r'D:\Vault\My files\@archives')
+    },
+    'Others': {
+        'extensions': [],
+        'destination': Path(r'D:\Vault\My files\@others')
+    }
+}
 
-# ! FILL IN BELOW
-# ? folder to track e.g. Windows: "C:\\Users\\UserName\\Downloads"
-source_dir = ""
-dest_dir_sfx = ""
-dest_dir_music = ""
-dest_dir_video = ""
-dest_dir_image = ""
-dest_dir_documents = ""
+FOLDERS_DESTINATION = Path(r'D:\Vault\My files\@folders')
 
-# ? supported image types
-image_extensions = [".jpg", ".jpeg", ".jpe", ".jif", ".jfif", ".jfi", ".png", ".gif", ".webp", ".tiff", ".tif", ".psd", ".raw", ".arw", ".cr2", ".nrw",
-                    ".k25", ".bmp", ".dib", ".heif", ".heic", ".ind", ".indd", ".indt", ".jp2", ".j2k", ".jpf", ".jpf", ".jpx", ".jpm", ".mj2", ".svg", ".svgz", ".ai", ".eps", ".ico"]
-# ? supported Video types
-video_extensions = [".webm", ".mpg", ".mp2", ".mpeg", ".mpe", ".mpv", ".ogg",
-                    ".mp4", ".mp4v", ".m4v", ".avi", ".wmv", ".mov", ".qt", ".flv", ".swf", ".avchd"]
-# ? supported Audio types
-audio_extensions = [".m4a", ".flac", "mp3", ".wav", ".wma", ".aac"]
-# ? supported Document types
-document_extensions = [".doc", ".docx", ".odt",
-                       ".pdf", ".xls", ".xlsx", ".ppt", ".pptx"]
+def create_folders(rules, folders_destination):
+    # Create folders for file types
+    for folder_info in rules.values():
+        destination_folder = folder_info['destination']
+        if not destination_folder.exists():
+            destination_folder.mkdir(parents=True, exist_ok=True)
+            print(f"Created folder: {destination_folder}")
 
+    # Create folder for directories
+    if not folders_destination.exists():
+        folders_destination.mkdir(parents=True, exist_ok=True)
+        print(f"Created folder: {folders_destination}")
 
-def make_unique(dest, name):
-    filename, extension = splitext(name)
-    counter = 1
-    # * IF FILE EXISTS, ADDS NUMBER TO THE END OF THE FILENAME
-    while exists(f"{dest}/{name}"):
-        name = f"{filename}({str(counter)}){extension}"
-        counter += 1
+def get_destination_folder(extension, rules):
+    for folder, folder_info in rules.items():
+        if extension in folder_info['extensions']:
+            return folder_info['destination']
+    return rules['Others']['destination']
 
-    return name
+def sort_files_and_folders(source_folder, rules, folders_destination):
+    for item in source_folder.iterdir():
+        if item.is_file():
+            extension = item.suffix.lower()
+            destination_folder = get_destination_folder(extension, rules)
+            destination_path = destination_folder / item.name
+            print(f"Moving file {item} to {destination_path}")
+            shutil.move(str(item), str(destination_path))
+        elif item.is_dir():
+            try:
+                # Create zip archive of the folder
+                archive_name = folders_destination / item.name
+                shutil.make_archive(str(archive_name), 'zip', str(item))
+                print(f"Created zip archive {archive_name}.zip")
 
+                # Move the zip archive to the destination
+                archive_path = folders_destination / f"{item.name}.zip"
+                print(f"Moving zip archive {archive_path} to {folders_destination}")
+                shutil.move(str(archive_path), str(folders_destination))
 
-def move_file(dest, entry, name):
-    if exists(f"{dest}/{name}"):
-        unique_name = make_unique(dest, name)
-        oldName = join(dest, name)
-        newName = join(dest, unique_name)
-        rename(oldName, newName)
-    move(entry, dest)
+            except Exception as e:
+                print(f"Failed to process folder {item}: {e}")
+            finally:
+                # Remove the original folder
+                shutil.rmtree(str(item))
+                print(f"Removed original folder {item}")
 
-
-class MoverHandler(FileSystemEventHandler):
-    # ? THIS FUNCTION WILL RUN WHENEVER THERE IS A CHANGE IN "source_dir"
-    # ? .upper is for not missing out on files with uppercase extensions
-    def on_modified(self, event):
-        with scandir(source_dir) as entries:
-            for entry in entries:
-                name = entry.name
-                self.check_audio_files(entry, name)
-                self.check_video_files(entry, name)
-                self.check_image_files(entry, name)
-                self.check_document_files(entry, name)
-
-    def check_audio_files(self, entry, name):  # * Checks all Audio Files
-        for audio_extension in audio_extensions:
-            if name.endswith(audio_extension) or name.endswith(audio_extension.upper()):
-                if entry.stat().st_size < 10_000_000 or "SFX" in name:  # ? 10Megabytes
-                    dest = dest_dir_sfx
-                else:
-                    dest = dest_dir_music
-                move_file(dest, entry, name)
-                logging.info(f"Moved audio file: {name}")
-
-    def check_video_files(self, entry, name):  # * Checks all Video Files
-        for video_extension in video_extensions:
-            if name.endswith(video_extension) or name.endswith(video_extension.upper()):
-                move_file(dest_dir_video, entry, name)
-                logging.info(f"Moved video file: {name}")
-
-    def check_image_files(self, entry, name):  # * Checks all Image Files
-        for image_extension in image_extensions:
-            if name.endswith(image_extension) or name.endswith(image_extension.upper()):
-                move_file(dest_dir_image, entry, name)
-                logging.info(f"Moved image file: {name}")
-
-    def check_document_files(self, entry, name):  # * Checks all Document Files
-        for documents_extension in document_extensions:
-            if name.endswith(documents_extension) or name.endswith(documents_extension.upper()):
-                move_file(dest_dir_documents, entry, name)
-                logging.info(f"Moved document file: {name}")
-
-
-# ! NO NEED TO CHANGE BELOW CODE
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO,
-                        format='%(asctime)s - %(message)s',
-                        datefmt='%Y-%m-%d %H:%M:%S')
-    path = source_dir
-    event_handler = MoverHandler()
-    observer = Observer()
-    observer.schedule(event_handler, path, recursive=True)
-    observer.start()
-    try:
-        while True:
-            sleep(10)
-    except KeyboardInterrupt:
-        observer.stop()
-    observer.join()
+    create_folders(SORTING_RULES, FOLDERS_DESTINATION)
+    sort_files_and_folders(DOWNLOADS_FOLDER, SORTING_RULES, FOLDERS_DESTINATION)
+    print("Sorting completed.")
